@@ -1,0 +1,9 @@
+credentials.env
+.env
+__pycache__/
+.tools/
+.venv/
+.pytest_cache/
+.ruff_cache/
+.coverage
+htmlcov/

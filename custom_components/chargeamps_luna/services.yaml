@@ -1,0 +1,3 @@
+refresh:
+  name: Refresh charger status
+  description: Immediately fetch the latest status for all configured Charge Amps accounts and chargers.

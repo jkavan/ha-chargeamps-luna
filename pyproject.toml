@@ -1,0 +1,26 @@
+[project]
+name = "homeassistant-chargeamps-luna"
+version = "1.0.0"
+description = "Home Assistant custom integration for Charge Amps Luna"
+requires-python = ">=3.14.2"
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "function"
+testpaths = ["tests"]
+addopts = "-q --strict-markers"
+filterwarnings = [
+  "ignore:Setting custom ClientSession.close attribute is discouraged:DeprecationWarning",
+]
+
+[tool.ruff]
+target-version = "py314"
+line-length = 100
+
+[tool.ruff.lint]
+select = ["E4", "E7", "E9", "F", "I", "UP", "ASYNC"]
+
+[tool.ruff.lint.isort]
+known-first-party = ["custom_components.chargeamps_luna"]
+section-order = ["future", "standard-library", "third-party", "first-party", "local-folder"]
+

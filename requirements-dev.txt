@@ -1,0 +1,4 @@
+# Latest stable Home Assistant at implementation time (2026-11-02).
+pytest-homeassistant-custom-component==0.13.375
+aioresponses==0.7.9
+ruff==0.17.3

@@ -1,0 +1,12 @@
+{
+  "domain": "chargeamps_luna",
+  "name": "Charge Amps Luna",
+  "codeowners": ["@jkavan"],
+  "config_flow": true,
+  "documentation": "https://github.com/jkavan/ha-chargeamps-luna",
+  "integration_type": "hub",
+  "iot_class": "cloud_polling",
+  "issue_tracker": "https://github.com/jkavan/ha-chargeamps-luna/issues",
+  "requirements": [],
+  "version": "1.0.0"
+}

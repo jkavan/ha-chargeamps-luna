@@ -1,0 +1,48 @@
+{
+  "title": "Charge Amps Luna",
+  "config": {
+    "step": {
+      "user": {
+        "title": "Connect to Charge Amps",
+        "description": "Enter your portal account and refresh interval. No API key is required.",
+        "data": {
+          "username": "Username (email)",
+          "password": "Password",
+          "url": "Portal URL",
+          "refresh_interval": "Refresh interval (minutes)"
+        }
+      },
+      "reconfigure": {
+        "title": "Reconfigure Charge Amps",
+        "description": "Change the account, portal URL, or refresh interval. Leave the password empty to keep the current password.",
+        "data": {
+          "username": "Username (email)",
+          "password": "New password (optional)",
+          "url": "Portal URL",
+          "refresh_interval": "Refresh interval (minutes)"
+        }
+      },
+      "reauth_confirm": {
+        "title": "Sign in to Charge Amps again",
+        "description": "Check your portal credentials to restore access.",
+        "data": {
+          "username": "Username (email)",
+          "password": "Password",
+          "url": "Portal URL",
+          "refresh_interval": "Refresh interval (minutes)"
+        }
+      }
+    },
+    "error": {
+      "cannot_connect": "Cannot connect to the Charge Amps portal. Check the URL and connection.",
+      "invalid_auth": "The portal rejected the username or password.",
+      "invalid_url": "Enter an HTTPS portal URL, such as https://my.charge.space.",
+      "no_chargers": "No owned chargers were found for this account."
+    },
+    "abort": {
+      "already_configured": "This portal account is already configured.",
+      "reauth_successful": "Authentication updated successfully.",
+      "reconfigure_successful": "Configuration updated successfully."
+    }
+  }
+}
