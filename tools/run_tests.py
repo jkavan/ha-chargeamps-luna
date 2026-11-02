@@ -7,7 +7,6 @@ Production integration modules and Home Assistant fixtures are not replaced.
 """
 
 import sys
-from pathlib import Path
 from types import ModuleType
 
 
@@ -26,8 +25,6 @@ if sys.platform == "win32":
         for method in methods:
             setattr(module, method, unsupported)
         sys.modules[name] = module
-
-sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 import pytest  # noqa: E402
 
