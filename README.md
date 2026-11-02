@@ -86,6 +86,16 @@ pytest
 
 On Windows, run `python tools/run_tests.py` instead of `pytest`.
 
+### Release New Version
+
+To release a version, update `version` in `manifest.json`, commit and push,
+then push a matching tag:
+
+```sh
+git tag v1.0.0
+git push origin v1.0.0
+```
+
 ## Disclaimer
 
 This project is not affiliated with, endorsed by, or supported by Charge Amps AB.

@@ -1,0 +1,67 @@
+name: Release
+on:
+  push:
+    tags:
+      - 'v[0-9]*'
+permissions:
+  contents: read
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+jobs:
+  version:
+    name: Check release version
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Match tag to integration version
+        env:
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: |
+          python - <<'PY'
+          import json
+          import os
+          import re
+          from pathlib import Path
+
+          tag = os.environ["RELEASE_TAG"]
+          version = json.loads(
+              Path("custom_components/chargeamps_luna/manifest.json").read_text()
+          )["version"]
+          if not re.fullmatch(r"v[0-9]+\.[0-9]+\.[0-9]+", tag) or tag != f"v{version}":
+              raise SystemExit(
+                  f"Expected tag v{version} matching manifest.json (vMAJOR.MINOR.PATCH); got {tag}"
+              )
+          print(f"Release version verified: {tag}")
+          PY
+
+  tests:
+    needs: version
+    uses: ./.github/workflows/tests.yml
+
+  hacs:
+    needs: version
+    uses: ./.github/workflows/hacs.yml
+
+  publish:
+    name: Publish GitHub Release
+    needs: [version, tests, hacs]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Create release with generated notes
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: |
+          if gh release view "$RELEASE_TAG" --repo "$GH_REPO" >/dev/null 2>&1; then
+            echo "Release $RELEASE_TAG already exists."
+            exit 0
+          fi
+          gh release create "$RELEASE_TAG" \
+            --repo "$GH_REPO" \
+            --verify-tag \
+            --title "$RELEASE_TAG" \
+            --generate-notes
