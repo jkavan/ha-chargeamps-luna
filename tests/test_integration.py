@@ -1,5 +1,6 @@
 """Exercise actual Home Assistant entities, actions, polling, and lifecycle."""
 
+import json
 from copy import deepcopy
 from datetime import timedelta
 from unittest.mock import patch
@@ -13,6 +14,7 @@ from pytest_homeassistant_custom_component.common import MockConfigEntry, async_
 from custom_components.chargeamps_luna.api import AuthenticationError, CannotConnect, parse_chargers
 from custom_components.chargeamps_luna.config_flow import account_id
 from custom_components.chargeamps_luna.const import DOMAIN
+from custom_components.chargeamps_luna.diagnostics import async_get_config_entry_diagnostics
 
 CLIENT = "custom_components.chargeamps_luna.api.ChargeAmpsClient"
 
@@ -39,6 +41,15 @@ async def test_entities(hass, loaded):
     assert select.state == "Always on"
     assert select.attributes["options"] == ["Off", "Schedule", "Always on"]
     assert hass.states.get("button.luna_refresh_status") is not None
+    assert hass.states.get("binary_sensor.luna_portal_connection").state == "on"
+    assert hass.states.get("binary_sensor.luna_fault").state == "off"
+    assert hass.states.get("sensor.luna_error_code").state == "NoError"
+    assert hass.states.get("sensor.luna_firmware").state == "1.7.5"
+    assert hass.states.get("sensor.luna_firmware").attributes["available_version"] == "1.8.0"
+    assert hass.states.get("sensor.luna_last_successful_refresh").state not in (
+        "unknown",
+        "unavailable",
+    )
 
 
 async def test_manual_refresh_button_and_action(hass, loaded):
@@ -51,8 +62,10 @@ async def test_manual_refresh_button_and_action(hass, loaded):
     assert read.await_count == 3
 
 
-async def test_mode_selector(hass, loaded, raw_chargers):
+async def test_mode_selector(hass, freezer, loaded, raw_chargers):
     _, _, write = loaded
+    previous_refresh = hass.states.get("sensor.luna_last_successful_refresh").state
+    freezer.tick(timedelta(seconds=1))
     raw_chargers[0]["connectors"][0]["mode"] = "Schedule"
     write.return_value = parse_chargers(raw_chargers)
     await hass.services.async_call(
@@ -63,6 +76,7 @@ async def test_mode_selector(hass, loaded, raw_chargers):
     )
     write.assert_awaited_once_with("test-luna", 1, "Schedule")
     assert hass.states.get("select.luna_charging_mode").state == "Schedule"
+    assert hass.states.get("sensor.luna_last_successful_refresh").state != previous_refresh
 
 
 async def test_default_polling_interval(hass, freezer, loaded):
@@ -78,18 +92,78 @@ async def test_default_polling_interval(hass, freezer, loaded):
     assert read.await_count == 2
 
 
-async def test_refresh_failure_marks_unavailable_but_button_recovers(hass, loaded):
+async def test_refresh_failure_marks_unavailable_but_button_recovers(hass, freezer, loaded):
     _, read, _ = loaded
+    initial_refresh = hass.states.get("sensor.luna_last_successful_refresh").state
+    freezer.tick(timedelta(minutes=1))
+    await hass.services.async_call(DOMAIN, "refresh", {}, blocking=True)
+    latest_refresh = hass.states.get("sensor.luna_last_successful_refresh").state
+    assert latest_refresh != initial_refresh  # Even when the charger data is unchanged.
+    freezer.tick(timedelta(minutes=1))
     read.side_effect = CannotConnect("Temporary connection failure")
     with pytest.raises(HomeAssistantError):
         await hass.services.async_call(DOMAIN, "refresh", {}, blocking=True)
     assert hass.states.get("sensor.luna_status").state == "unavailable"
     assert hass.states.get("button.luna_refresh_status").state != "unavailable"
+    assert hass.states.get("sensor.luna_last_successful_refresh").state == latest_refresh
+    connection = hass.states.get("binary_sensor.luna_portal_connection")
+    assert connection.state == "off"
+    assert connection.attributes["last_error"] == "Temporary connection failure"
+    freezer.tick(timedelta(minutes=1))
     read.side_effect = None
     await hass.services.async_call(
         "button", "press", {"entity_id": "button.luna_refresh_status"}, blocking=True
     )
     assert hass.states.get("sensor.luna_status").state == "Online"
+    assert hass.states.get("binary_sensor.luna_portal_connection").state == "on"
+    assert hass.states.get("binary_sensor.luna_portal_connection").attributes["last_error"] is None
+    assert hass.states.get("sensor.luna_last_successful_refresh").state != latest_refresh
+
+
+@pytest.mark.parametrize(
+    "status,error,expected",
+    [
+        ("Unavailable", "NoError", "off"),
+        ("Faulted", "NoError", "on"),
+        ("Available", "GroundFailure", "on"),
+        ("Unknown", None, "unknown"),
+    ],
+)
+async def test_reported_connector_faults(hass, loaded, raw_chargers, status, error, expected):
+    entry, _, _ = loaded
+    raw_chargers[0]["connectors"][0].update(ocppStatus=status, errorCode=error)
+    entry.runtime_data.async_set_updated_data(parse_chargers(raw_chargers))
+    assert hass.states.get("binary_sensor.luna_fault").state == expected
+
+
+async def test_offline_charger_and_portal_failure_are_distinct(hass, loaded, raw_chargers):
+    entry, _, _ = loaded
+    raw_chargers[0]["chargePointStatus"] = "Offline"
+    entry.runtime_data.async_set_updated_data(parse_chargers(raw_chargers))
+    assert hass.states.get("sensor.luna_status").state == "Offline"
+    assert hass.states.get("binary_sensor.luna_portal_connection").state == "on"
+    assert hass.states.get("binary_sensor.luna_fault").state == "unavailable"
+
+
+async def test_download_diagnostics_omits_identity_and_credentials(hass, loaded, config_data):
+    entry, read, _ = loaded
+    report = await async_get_config_entry_diagnostics(hass, entry)
+    serialized = json.dumps(report)
+    for private in [
+        config_data["username"],
+        config_data["password"],
+        config_data["url"],
+        "PRIVATE_WIFI",
+        "PRIVATE_EMAIL",
+        "PRIVATE_TAG",
+        "test-luna",
+        '"Luna"',
+    ]:
+        assert private not in serialized
+    assert report["portal_connected"] is True
+    assert report["chargers"][0]["firmware"] == "1.7.5"
+    assert report["chargers"][0]["last_heartbeat"] is None
+    assert read.await_count == 1  # Downloading uses cached state, not another cloud request.
 
 
 async def test_new_and_removed_chargers(hass, loaded, raw_chargers):

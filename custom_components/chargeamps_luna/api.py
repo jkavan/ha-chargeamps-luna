@@ -91,6 +91,11 @@ class Charger:
     read_only: bool
     externally_managed: bool
     connectors: tuple[Connector, ...]
+    available_firmware: str | None = None
+    last_heartbeat: str | None = None
+    offline_since: str | None = None
+    firmware_last_updated: str | None = None
+    wifi_signal_strength: int | float | None = None
 
 
 def parse_chargers(data: Any) -> dict[str, Charger]:
@@ -139,6 +144,13 @@ def parse_chargers(data: Any) -> dict[str, Charger]:
             read_only=bool(raw.get("ownerReadOnly")),
             externally_managed=bool(raw.get("ocppEnabled")),
             connectors=tuple(connectors),
+            available_firmware=raw.get("availableFirmwareVersion"),
+            last_heartbeat=raw.get("lastHeartbeat"),
+            offline_since=raw.get("offlineSince"),
+            firmware_last_updated=raw.get("firmwareLastUpdated"),
+            wifi_signal_strength=raw.get("wifiSignalStrength")
+            if type(raw.get("wifiSignalStrength")) in (int, float)
+            else None,
         )
     return result
 
