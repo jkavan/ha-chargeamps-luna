@@ -1,6 +1,7 @@
 {
   "domain": "chargeamps_luna",
   "name": "Charge Amps Luna",
+  "categories": ["energy.ev_charging"],
   "codeowners": ["@jkavan"],
   "config_flow": true,
   "documentation": "https://github.com/jkavan/ha-chargeamps-luna",
