@@ -26,5 +26,6 @@ async def async_get_config_entry_diagnostics(
         "portal_connected": coordinator.last_update_success,
         "last_successful_refresh": refreshed.isoformat() if refreshed else None,
         "last_refresh_error": coordinator.refresh_error,
+        "energy_refresh_error": coordinator.client.energy_error,
         "chargers": chargers,
     }

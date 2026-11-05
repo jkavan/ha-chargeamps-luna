@@ -37,6 +37,8 @@ def raw_chargers():
                         "ocppStatus": "Available",
                         "isCharging": False,
                         "errorCode": "NoError",
+                        "totalConsumptionKwh": 3.945984,
+                        "totalConsumptionRaw": 3945984.0,
                         "userCurrent": 16,
                         "defaultNfcTagId": "PRIVATE_TAG",
                     }

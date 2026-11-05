@@ -2,7 +2,8 @@
 
 from datetime import datetime
 
-from homeassistant.components.sensor import SensorDeviceClass, SensorEntity
+from homeassistant.components.sensor import SensorDeviceClass, SensorEntity, SensorStateClass
+from homeassistant.const import UnitOfEnergy
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers.entity import EntityCategory
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
@@ -49,6 +50,23 @@ async def async_setup_entry(
                         connector.id, "Error code", len(charger.connectors)
                     )
                     entities.append(error)
+                    energy = ChargeAmpsSessionEnergySensor(
+                        coordinator,
+                        charger,
+                        f"connector_{connector.id}_session_energy",
+                        connector.id,
+                    )
+                    energy._attr_name = connector_name(
+                        connector.id, "Session energy", len(charger.connectors)
+                    )
+                    entities.append(energy)
+                    total = ChargeAmpsTotalEnergySensor(
+                        coordinator, charger, f"connector_{connector.id}_total_energy", connector.id
+                    )
+                    total._attr_name = connector_name(
+                        connector.id, "Total energy", len(charger.connectors)
+                    )
+                    entities.append(total)
         async_add_entities(entities)
 
     add_entities()
@@ -111,3 +129,44 @@ class ChargeAmpsErrorSensor(ChargeAmpsEntity, SensorEntity):
     @property
     def native_value(self) -> str | None:
         return self.connector.error_code if self.connector else None
+
+
+class ChargeAmpsSessionEnergySensor(ChargeAmpsEntity, SensorEntity):
+    """Reported session energy; never accumulate these resetting snapshots."""
+
+    _attr_device_class = SensorDeviceClass.ENERGY
+    _attr_native_unit_of_measurement = UnitOfEnergy.KILO_WATT_HOUR
+    _attr_suggested_display_precision = 3
+
+    @property
+    def available(self) -> bool:
+        return super().available and self.native_value is not None
+
+    @property
+    def native_value(self) -> float | None:
+        if connector := self.connector:
+            return connector.session_energy_kwh
+        return None
+
+
+class ChargeAmpsTotalEnergySensor(ChargeAmpsEntity, SensorEntity):
+    """The charger's precise lifetime energy meter, suitable for energy statistics."""
+
+    _attr_device_class = SensorDeviceClass.ENERGY
+    _attr_native_unit_of_measurement = UnitOfEnergy.KILO_WATT_HOUR
+    _attr_state_class = SensorStateClass.TOTAL
+    _attr_suggested_display_precision = 3
+
+    @property
+    def available(self) -> bool:
+        return super().available and self.native_value is not None
+
+    @property
+    def native_value(self) -> float | None:
+        return self.connector.total_energy_kwh if self.connector else None
+
+    @property
+    def extra_state_attributes(self) -> dict | None:
+        if connector := self.connector:
+            return {"last_meter_sample": connector.energy_sampled_at}
+        return None

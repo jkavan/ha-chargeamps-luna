@@ -2,6 +2,7 @@
 
 import json
 from copy import deepcopy
+from dataclasses import replace
 from datetime import timedelta
 from unittest.mock import patch
 
@@ -50,6 +51,35 @@ async def test_entities(hass, loaded):
         "unknown",
         "unavailable",
     )
+    assert hass.states.get("sensor.luna_session_energy").state == "3.945984"
+
+
+async def test_energy_sensors_preserve_precision_and_availability(hass, loaded):
+    entry, _, _ = loaded
+    coordinator = entry.runtime_data
+    charger = coordinator.data["test-luna"]
+
+    def update(total):
+        connector = replace(
+            charger.connectors[0],
+            total_energy_kwh=total,
+            energy_sampled_at="2026-11-05T20:09:45+00:00",
+        )
+        coordinator.async_set_updated_data({charger.id: replace(charger, connectors=(connector,))})
+
+    update(6169.41)
+    total = hass.states.get("sensor.luna_total_energy")
+    assert total.state == "6169.41"
+    assert total.attributes["device_class"] == "energy"
+    assert total.attributes["unit_of_measurement"] == "kWh"
+    assert total.attributes["state_class"] == "total"
+    assert total.attributes["last_meter_sample"] == "2026-11-05T20:09:45+00:00"
+    assert "state_class" not in hass.states.get("sensor.luna_session_energy").attributes
+    update(None)
+    assert hass.states.get("sensor.luna_total_energy").state == "unavailable"
+    assert hass.states.get("sensor.luna_status").state == "Online"
+    update(6169.583)
+    assert hass.states.get("sensor.luna_total_energy").state == "6169.583"
 
 
 async def test_manual_refresh_button_and_action(hass, loaded):

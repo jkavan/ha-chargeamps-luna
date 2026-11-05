@@ -24,7 +24,7 @@ async def async_validate_input(hass, data: dict) -> bool:
     session = async_create_clientsession(hass, auto_cleanup=False, cookie_jar=CookieJar())
     try:
         client = ChargeAmpsClient(session, data[CONF_URL], data[CONF_USERNAME], data[CONF_PASSWORD])
-        return bool(await client.async_get_chargers())
+        return bool(await client.async_get_chargers(include_energy=False))
     finally:
         # Home Assistant owns the shared connector; detach this temporary session.
         session.detach()

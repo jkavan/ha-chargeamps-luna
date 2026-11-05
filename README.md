@@ -35,6 +35,8 @@ For a charger named `Luna`, the default entities are:
 | --- | --- |
 | `sensor.luna_status` | Charger status, such as Online or Offline |
 | `sensor.luna_connector_status` | Connector status, such as Available or Charging |
+| `sensor.luna_total_energy` | Lifetime energy charged, in kWh; suitable for the Energy dashboard |
+| `sensor.luna_session_energy` | Reported current or last session energy, in kWh |
 | `binary_sensor.luna_charging` | Whether the charger is charging |
 | `select.luna_charging_mode` | Off / Schedule / Always on |
 | `button.luna_refresh_status` | Refresh status immediately |
@@ -43,6 +45,13 @@ For a charger named `Luna`, the default entities are:
 **Always on** permits charging, subject to vehicle, RFID, and load-balancing
 settings. Mode control is unavailable when the charger is offline or the account
 has read-only access.
+
+### Energy tracking
+
+Add **Luna total energy** under **Settings > Dashboards > Energy > Individual
+devices**. It uses the cloud's `lifetimeEnergyWh` meter, converted to kWh. Session energy is shown separately and resets between sessions.
+
+It will be recorded when HA receives it, earlier hours are not backfilled.
 
 ### Automation examples
 

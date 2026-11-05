@@ -7,14 +7,70 @@ account details, Wi-Fi credentials, cookies, and authentication tokens.
 from __future__ import annotations
 
 import asyncio
+import logging
 from copy import deepcopy
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
+from datetime import UTC, datetime, timedelta
+from math import isfinite
 from typing import Any
-from urllib.parse import quote, urlsplit, urlunsplit
+from urllib.parse import quote, urlencode, urlsplit, urlunsplit
 
 import aiohttp
 
 from .const import MODE_TO_PORTAL, PORTAL_TO_MODE
+
+LOGGER = logging.getLogger(__name__)
+
+
+def energy_value(value: Any) -> float | None:
+    """Missing or invalid measurements must never turn into zero consumption."""
+    if type(value) in (int, float) and isfinite(value) and value >= 0:
+        return float(value)
+    return None
+
+
+def session_energy(data: dict, raw_key: str) -> float | None:
+    """Prefer explicit kWh; the portal's raw session counts are millionths of kWh."""
+    if data.get("totalConsumptionKwh") is not None:
+        return energy_value(data["totalConsumptionKwh"])
+    raw = energy_value(data.get(raw_key))
+    return raw / 1_000_000 if raw is not None else None
+
+
+def parse_lifetime_energy(data: Any) -> dict[int, tuple[float, datetime]]:
+    """Take the newest valid lifetime meter sample for each connector, not the maximum."""
+    if not isinstance(data, dict) or not isinstance(data.get("series"), list):
+        raise CannotConnect("The portal returned an unexpected energy response.")
+    result = {}
+    seen = set()
+    for series in data["series"]:
+        if (
+            not isinstance(series, dict)
+            or type(series.get("connectorId")) is not int
+            or not isinstance(series.get("data"), list)
+            or series["connectorId"] in seen
+        ):
+            raise CannotConnect("The portal returned an invalid connector energy response.")
+        seen.add(series["connectorId"])
+        latest = None
+        for item in series["data"]:
+            if not isinstance(item, dict):
+                raise CannotConnect("The portal returned an invalid energy sample.")
+            wh = energy_value(item.get("lifetimeEnergyWh"))
+            stamp = item.get("lastObservedAtUtc") or item.get("bucketStartUtc")
+            if wh is None or not isinstance(stamp, str):
+                continue
+            try:
+                observed = datetime.fromisoformat(stamp)
+            except ValueError:
+                continue
+            if observed.tzinfo is None or observed.utcoffset() is None:
+                continue
+            if latest is None or observed > latest[1]:
+                latest = (wh / 1000, observed.astimezone(UTC))
+        if latest is not None:
+            result[series["connectorId"]] = latest
+    return result
 
 
 class ChargeAmpsError(Exception):
@@ -77,6 +133,9 @@ class Connector:
     mode: str | None
     is_charging: bool | None
     error_code: str | None
+    session_energy_kwh: float | None = None
+    total_energy_kwh: float | None = None
+    energy_sampled_at: str | None = None
 
 
 @dataclass(frozen=True)
@@ -131,6 +190,7 @@ def parse_chargers(data: Any) -> dict[str, Charger]:
                     if isinstance(connector.get("isCharging"), bool)
                     else None,
                     error_code=connector.get("errorCode"),
+                    session_energy_kwh=session_energy(connector, "totalConsumptionRaw"),
                 )
             )
         if raw["id"] in result:
@@ -166,6 +226,8 @@ class ChargeAmpsClient:
         self._csrf: str | None = None
         self._authenticated = False
         self._lock = asyncio.Lock()
+        self.energy_error: str | None = None
+        self._lifetime_energy: dict[str, dict[int, tuple[float, datetime]]] = {}
 
     async def _request(
         self, method: str, path: str, body: dict | None = None, *, csrf: bool = False
@@ -247,10 +309,79 @@ class ChargeAmpsClient:
         parse_chargers(raw)
         return raw
 
-    async def async_get_chargers(self) -> dict[str, Charger]:
+    async def _with_energy(self, chargers: dict[str, Charger]) -> dict[str, Charger]:
+        """Read precise meter values with one small request per charger during normal polling."""
+        errors = []
+        result = {}
+        now = datetime.now(UTC)
+        for charger in chargers.values():
+            try:
+                cached = self._lifetime_energy.get(charger.id, {})
+                measured = await self._read_lifetime_energy(charger.id, now, 2, "5m")
+                missing = {c.id for c in charger.connectors} - (cached.keys() | measured.keys())
+                if missing:
+                    # On first load an idle charger may have no recent samples. These
+                    # bounded fallback reads find its last meter value; no history is summed.
+                    measured = (
+                        await self._read_lifetime_energy(charger.id, now, 24, "5m") | measured
+                    )
+                    missing -= measured.keys()
+                    if missing:
+                        measured = (
+                            await self._read_lifetime_energy(charger.id, now, 24 * 730, "1d")
+                            | measured
+                        )
+                samples = dict(cached)
+                for connector_id, sample in measured.items():
+                    if connector_id not in samples or sample[1] >= samples[connector_id][1]:
+                        samples[connector_id] = sample
+                self._lifetime_energy[charger.id] = samples
+                result[charger.id] = replace(
+                    charger,
+                    connectors=tuple(
+                        replace(
+                            connector,
+                            total_energy_kwh=samples[connector.id][0],
+                            energy_sampled_at=samples[connector.id][1].isoformat(),
+                        )
+                        if connector.id in samples
+                        else connector
+                        for connector in charger.connectors
+                    ),
+                )
+            except CannotConnect as err:
+                # Keep status and controls usable, but never substitute zero for a failed read.
+                errors.append(str(err))
+                result[charger.id] = charger
+        error = errors[0] if errors else None
+        if error and self.energy_error is None:
+            LOGGER.warning("Cannot refresh charging energy: %s", error)
+        elif not error and self.energy_error is not None:
+            LOGGER.info("Charging energy updates recovered")
+        self.energy_error = error
+        return result
+
+    async def _read_lifetime_energy(
+        self, charger_id: str, now: datetime, hours: int, resolution: str
+    ) -> dict[int, tuple[float, datetime]]:
+        params = urlencode(
+            {
+                "from": (now - timedelta(hours=hours)).isoformat(),
+                # Include the current bucket; the cloud reports its latest available sample.
+                "to": (now + timedelta(minutes=5)).isoformat(),
+                "resolution": resolution,
+            }
+        )
+        data = await self._read(
+            f"/chargepoints/{quote(charger_id, safe='')}/consumption-data?{params}"
+        )
+        return parse_lifetime_energy(data)
+
+    async def async_get_chargers(self, *, include_energy: bool = True) -> dict[str, Charger]:
         """Return status with no account or network secrets."""
         async with self._lock:
-            return parse_chargers(await self._raw_chargers())
+            chargers = parse_chargers(await self._raw_chargers())
+            return await self._with_energy(chargers) if include_energy else chargers
 
     async def async_set_mode(
         self, charger_id: str, connector_id: int, mode: str
@@ -273,7 +404,7 @@ class ChargeAmpsClient:
                 raise ModeError("The selected connector no longer exists.")
             requested = MODE_TO_PORTAL[mode]
             if connectors[0].get("mode") == requested:
-                return parse_chargers(raw)
+                return await self._with_energy(parse_chargers(raw))
             if mode == "Schedule":
                 schedules = await self._read(
                     f"/smartChargingSchedules/chargepoint/{quote(charger_id, safe='')}"
@@ -313,7 +444,7 @@ class ChargeAmpsClient:
                 if current and any(
                     c.id == connector_id and c.mode == mode for c in current.connectors
                 ):
-                    return updated
+                    return await self._with_energy(updated)
                 if attempt < 4:
                     await asyncio.sleep(1)
             raise ModeError(
